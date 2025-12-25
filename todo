@@ -1,0 +1,11 @@
+no final salvar todos os contigs formados e inclusive os que não foram formados de todos os cromossomos
+
+- nao tenho identificador pra read e nao consigo saber quando ela ja foi usada
+- nao retiro as reads da cluster, para nao utilizar atoa
+
+
+
+-- talvez, e se ?
+
+- ao retirar reads de uma cluster, so reescrever as que nao estao sendo utilizadas
+- salvar as centroides de cada cluster para remontar elas e reclusterizar as reads e contigs montados 

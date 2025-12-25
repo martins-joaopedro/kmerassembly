@@ -1,10 +1,13 @@
 #include <bits/stdc++.h>
-using namespace std; // minimal
+#include <random>
+#include "header/GeneticAlgorithm.hpp"
+
+using namespace std;
 
 int K = 6;
 int EXPLORATION = 150;
 const int MAX_CLUSTERS = 5;
-const double THRESHOLD = 0.2;  // Aumentado para clusterizar mais reads
+const double THRESHOLD = 0.2;  
 
 struct Cluster {
     bool initialized = false;
@@ -231,23 +234,15 @@ void clusterize() {
     cout << "\nFinalizado. Clusters salvos em 'instance/clusters.txt'\n";
 }
 
-struct Chromossome {
-    // vetor de reads
-    vector<string> genes;
-
-    // avalia as sobreposições
-    int getFitness() {
-        for(string read : genes) {
-
-        }
-    }
-}
-
 int main() {
     
+    // cria as 5 clusters
     //clusterize();
 
-
+    int chromosomesNumber = 2;
+    int genesNumber = 2;
+    GeneticAlgoritm GA(chromosomesNumber, genesNumber, MAX_CLUSTERS);
+    GA.start();
 
     return 0;
 }
