@@ -1,4 +1,4 @@
-#include "header/GeneticAlgorithm.hpp"
+#include "../header/GeneticAlgorithm.hpp"
 using namespace std;
 
 GeneticAlgoritm::GeneticAlgoritm(int chromosomesNumber, int genesNumber, int islandsNumber) {
@@ -10,7 +10,6 @@ GeneticAlgoritm::GeneticAlgoritm(int chromosomesNumber, int genesNumber, int isl
 vector<Chromosome> GeneticAlgoritm::crossover(Chromosome c1, Chromosome c2) {
 
     // pega um numero entre 25% - 75% do cromossomo 
-
     int c1Genes = c1.genes.size();
     int c2Genes = c2.genes.size();
     int minGenesNumber = min(c1Genes, c2Genes);
@@ -54,84 +53,133 @@ vector<Chromosome> GeneticAlgoritm::crossover(Chromosome c1, Chromosome c2) {
     return offspring;
 }
 
-// REFACTOR: nao ta fazendo sentido a remontagem com base na era, to montando os mesmos cromossomos, 
-vector<Chromosome> GeneticAlgoritm::createPopulation(int islandNumber, int era) {
-
-    string filename;
-
-    // nao vou clusterizar a cada era
-    /* if(era == 0) {
-        filename = "eras/" + to_string(islandNumber) + ".txt";
-    }   */
-    filename = "clusters/" + to_string(islandNumber) + ".txt";
-
-    ifstream file(filename);
+string loadReadAt(ifstream& fasta, uint64_t offset, uint32_t len) {
+    // Limpa flags e posiciona no início da sequência
+    fasta.clear();
+    fasta.seekg(offset, ios::beg);
     
-    if (!file.is_open()) {
-        cerr << "Erro ao abrir arquivo\n";
-        return vector<Chromosome>();
-    }
-
-    // TODO: resolver esse mockup de numero do começo do cluster
-    string line, read;
-    int totalReads = 5000;
-    int interval = chromosomesNumber * genesNumber;
+    string seq;
+    string line;
     
-   
-    
-    cout << totalReads << endl;
-
-    vector<Chromosome> population;
-    
-    int id = 0;
-    int generation = 0;
-    int MINOVERLAP = 5;
-    
-    Chromosome chromo(0, genesNumber, generation, MINOVERLAP, "");
-
-    // marca a quantidade de reads adicionadas
-    int processedReads = 0;
-
-    // marca o valor atual da read sendo lida
-    int currentRead = 0;
-
-    // se 100 / 3 = 33 interval
-    int K = (totalReads / interval);
-    K = 1;
-    
-    while (getline(file, line)) {
-        //cout << processedReads << endl;
-        // toda vez que encontrar uma read processa
-        if(line[0] == '>') {
-            if(!read.empty()) {
-                if(currentRead % K == 0) {
-                    cout << currentRead << endl;
-                    chromo.genes.push_back(read);
-                    processedReads++;
-                }
-                 
-                // sempre atualizo
-                currentRead++;
-                read.clear();
-            }
-        } else read += line;
-
-        // quando eu terminar de ler as quantidades eu add na pop
-        if(processedReads % genesNumber == 0 && !chromo.genes.empty()) {
-            population.push_back(chromo);
-            chromo = Chromosome(id, genesNumber, generation, MINOVERLAP, "");
-            id++;
+    // Lê até completar o tamanho ou encontrar próxima header
+    while (seq.size() < len && getline(fasta, line)) {
+        // Se encontrar um novo header, para
+        if (!line.empty() && line[0] == '>') {
+            break;
         }
-
-        if(processedReads > 0 and processedReads == chromosomesNumber*genesNumber) {
-            cout << "população calculada" << endl;
+        
+        // Remove Windows CRLF se existir
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        
+        // Adiciona à sequência
+        seq += line;
+        
+        // Se já leu o suficiente, para
+        if (seq.size() >= len) {
             break;
         }
     }
+    
+    // Garante o tamanho exato (se leu mais)
+    if (seq.size() > len) {
+        seq.resize(len);
+    }
+    
+    return seq;
+}
 
-    file.close();
+
+vector<Chromosome> GeneticAlgoritm::createPopulation(int islandNumber, int era) {
+
+    int clusterId = (islandNumber % 1) + 1;
+    string filename = "clusters/" + to_string(clusterId) + ".txt";
+    string fastaFile = "instance/mycoa.fasta";
+
+    cout << "Lendo população do cluster " << clusterId
+         << " (ilha " << islandNumber << ", era " << era << ")\n";
+
+    ifstream cluster(filename);
+    ifstream fasta(fastaFile, ios::binary);
+
+    if (!cluster.is_open()) {
+        cerr << "Erro ao abrir cluster: " << filename << "\n";
+        return {};
+    }
+    if (!fasta.is_open()) {
+        cerr << "Erro ao abrir FASTA: " << fastaFile << "\n";
+        return {};
+    }
+
+    vector<Chromosome> population;
+
+    int id;
+    uint64_t offset;
+    uint32_t len;
+
+    int processedReads = 0;
+    const int MINOVERLAP = 16;
+
+    Chromosome currentChromo(0, genesNumber, era, MINOVERLAP, "");
+
+    while (cluster >> id >> offset >> len) {
+
+        // RESET FORÇADO DO STREAM (importante!)
+        fasta.clear();
+        fasta.seekg(0, ios::beg);
+
+        string read = loadReadAt(fasta, offset, len);
+
+        if (read.empty()) {
+            cerr << "ERRO: Read vazia (id=" << id
+                 << ", offset=" << offset << ")\n";
+            continue;
+        }
+
+        if (read.size() != len) {
+            cerr << "ERRO: Read " << id
+                 << " tamanho incorreto (" << read.size()
+                 << " != " << len << "), descartando\n";
+            continue;
+        }
+
+        currentChromo.genes.push_back(read);
+        processedReads++;
+
+        if ((int)currentChromo.genes.size() == genesNumber) {
+
+            currentChromo.id = population.size();
+            population.push_back(currentChromo);
+
+            cout << "Cromossomo " << currentChromo.id
+                 << " criado com " << genesNumber << " genes\n";
+
+            if ((int)population.size() >= chromosomesNumber)
+                break;
+
+            currentChromo = Chromosome(
+                population.size(), genesNumber, era, MINOVERLAP, ""
+            );
+        }
+    }
+
+    if (!currentChromo.genes.empty()) {
+        cerr << "AVISO: Cromossomo incompleto descartado ("
+             << currentChromo.genes.size() << "/" << genesNumber << " genes)\n";
+    }
+
+    cout << "População criada: " << population.size()
+         << " cromossomos, " << processedReads << " reads processadas\n";
+
+    if (population.empty()) {
+        cerr << "ERRO: população vazia\n";
+        return {};
+    }
+
     return population;
 }
+
 
 void GeneticAlgoritm::start() {
 
@@ -165,7 +213,7 @@ void GeneticAlgoritm::start() {
     
                 // CROSSOVER: um da elite e um geral
                 if (pop.size() >= 2) {
-                    int idx1 = rand() % min(1, (int)(pop.size() * ELITE_PERC));
+                    int idx1 = rand() % max(1, (int)(pop.size() * ELITE_PERC));
                     int idx2 = rand() % pop.size();
                     
                     while (idx2 == idx1) 

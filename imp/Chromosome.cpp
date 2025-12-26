@@ -1,4 +1,4 @@
-#include "header/Chromosome.hpp"
+#include "../header/Chromosome.hpp"
 using namespace std;
 Chromosome::Chromosome(int id, int genesNumber, int generation, int minOverlap, string status)
 {
