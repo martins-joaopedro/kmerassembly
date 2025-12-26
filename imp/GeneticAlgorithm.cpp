@@ -1,10 +1,11 @@
 #include "../header/GeneticAlgorithm.hpp"
 using namespace std;
 
-GeneticAlgoritm::GeneticAlgoritm(int chromosomesNumber, int genesNumber, int islandsNumber) {
+GeneticAlgoritm::GeneticAlgoritm(int chromosomesNumber, int genesNumber, int islandsNumber, int MIN_OVERLAPING) {
     this->chromosomesNumber = chromosomesNumber;
     this->genesNumber = genesNumber;
     this->islandsNumber = islandsNumber;
+    this->MIN_OVERLAPING = MIN_OVERLAPING;
 } 
 
 vector<Chromosome> GeneticAlgoritm::crossover(Chromosome c1, Chromosome c2) {
@@ -18,10 +19,10 @@ vector<Chromosome> GeneticAlgoritm::crossover(Chromosome c1, Chromosome c2) {
     int point = (int)(0.25 * minGenesNumber) + random;
 
     int generation = 0;
-    int minOverlap = 5;
+
     vector<Chromosome> offspring;
-    offspring.emplace_back(c1.id, genesNumber, generation, 5, "");
-    offspring.emplace_back(c2.id, genesNumber, generation, 5, "");
+    offspring.emplace_back(c1.id, genesNumber, generation, MIN_OVERLAPING, "");
+    offspring.emplace_back(c2.id, genesNumber, generation, MIN_OVERLAPING, "");
     
     // sempre padronizo para o tamanho inicial mesmo que ja tenha formado contig
     //c1.genes.resize(genesNumber);
@@ -90,14 +91,13 @@ string loadReadAt(ifstream& fasta, uint64_t offset, uint32_t len) {
     return seq;
 }
 
-
 vector<Chromosome> GeneticAlgoritm::createPopulation(int islandNumber, int era) {
 
     int clusterId = (islandNumber % 1) + 1;
     string filename = "clusters/" + to_string(clusterId) + ".txt";
     string fastaFile = "instance/mycoa.fasta";
 
-    cout << "Lendo população do cluster " << clusterId
+    cout << "Lendo população do cluster " << clusterId 
          << " (ilha " << islandNumber << ", era " << era << ")\n";
 
     ifstream cluster(filename);
@@ -119,23 +119,20 @@ vector<Chromosome> GeneticAlgoritm::createPopulation(int islandNumber, int era) 
     uint32_t len;
 
     int processedReads = 0;
-    const int MINOVERLAP = 16;
-
-    Chromosome currentChromo(0, genesNumber, era, MINOVERLAP, "");
+ 
+    Chromosome currentChromo(0, genesNumber, era, MIN_OVERLAPING, "");
 
     while (cluster >> id >> offset >> len) {
 
-        // RESET FORÇADO DO STREAM (importante!)
-        fasta.clear();
-        fasta.seekg(0, ios::beg);
+        // marco como read usada
+        if (id >= usedReads.size())
+            usedReads.resize(id + 1, 0);
+
+        if (usedReads[id])
+            continue;
+        usedReads[id] = 1;
 
         string read = loadReadAt(fasta, offset, len);
-
-        if (read.empty()) {
-            cerr << "ERRO: Read vazia (id=" << id
-                 << ", offset=" << offset << ")\n";
-            continue;
-        }
 
         if (read.size() != len) {
             cerr << "ERRO: Read " << id
@@ -145,6 +142,7 @@ vector<Chromosome> GeneticAlgoritm::createPopulation(int islandNumber, int era) 
         }
 
         currentChromo.genes.push_back(read);
+        
         processedReads++;
 
         if ((int)currentChromo.genes.size() == genesNumber) {
@@ -159,7 +157,7 @@ vector<Chromosome> GeneticAlgoritm::createPopulation(int islandNumber, int era) 
                 break;
 
             currentChromo = Chromosome(
-                population.size(), genesNumber, era, MINOVERLAP, ""
+                population.size(), genesNumber, era, MIN_OVERLAPING, ""
             );
         }
     }
@@ -181,89 +179,156 @@ vector<Chromosome> GeneticAlgoritm::createPopulation(int islandNumber, int era) 
 }
 
 
+// TODO: cuidar para nao ultrapassar limites do arquivo 
+void GeneticAlgoritm::endMiscenegationPhase(vector<Chromosome> &pop, int islandNumber, int era) {
+    
+    string filename = "clusters/" + to_string(1) + ".txt";
+    string fastaFile = "instance/mycoa.fasta";
+    ifstream cluster(filename);
+    ifstream fasta(fastaFile, ios::binary);
+
+    int id;
+    uint64_t offset;
+    uint32_t len;
+
+    for(auto &cromo : pop) {
+        cromo.groupContigs();
+
+        cout << cromo.genes.size() << endl;
+        
+        // completo numero de genes
+        while (cluster >> id >> offset >> len) {
+
+            if(cromo.genes.size() >= genesNumber)
+                break;
+
+            // marco como read usada
+            if (id >= usedReads.size())
+                usedReads.resize(id + 1, 0);
+
+            if (usedReads[id])
+                continue;
+            //usedReads[id] = 1;
+
+            string read = loadReadAt(fasta, offset, len);
+
+            if (read.size() != len) {
+                cerr << "ERRO: Read " << id
+                    << " tamanho incorreto (" << read.size()
+                    << " != " << len << "), descartando\n";
+                continue;
+            }
+
+            // adiciono mais genes
+            cromo.genes.push_back(read);
+        }
+    }
+}
+
+
 void GeneticAlgoritm::start() {
 
     cout << "INICIANDO ALGORITMO GENETICO" << endl;
 
     ofstream outFile("out.txt");
 
-    int MAX_GA_IT = 5;
+    // iterações do GA procurando melhorias
+    int GA_IT = 10;
+
+    // marca um período para união dos contigs e inserção de novos genes;
+    int MISCEGENATION = 5;
+
+    // marca o período para a clusterização 
     int MAX_ERAS = 3;
+
     float ELITE_PERC = 0.3;
     bool DEBUG = true;
 
     for(int era=0; era<MAX_ERAS; era++) {
-        for(int clusterId = 0; clusterId < 1; clusterId++) {
 
+        // processo o GA-memetico pra todas as ilhas 
+        for(int clusterId = 0; clusterId < 1; clusterId++) {
             // inicial população para aquela ilha
             vector<Chromosome> pop = createPopulation(clusterId, era);
     
-            // evolui a população inicial   
-            for(int it=0; it<MAX_GA_IT; it++) {
+            // evolui a população inicial e ao final 
+            for(int it=0; it<GA_IT; it++) {
                 
-                // ordeno os cromossomos
-                sort(pop.begin(), pop.end(), [](const Chromosome& a, const Chromosome& b) {
-                    return a.fitness > b.fitness;
-                });
-    
-                outFile << "POPULAÇÂO ORDENADA" << endl;
-                for (int i = 0; i < pop.size(); i++) {
-                    outFile << pop[i].fitness << endl;
-                }
-    
-                // CROSSOVER: um da elite e um geral
-                if (pop.size() >= 2) {
-                    int idx1 = rand() % max(1, (int)(pop.size() * ELITE_PERC));
-                    int idx2 = rand() % pop.size();
-                    
-                    while (idx2 == idx1) 
-                        idx2 = rand() % pop.size();
-                    
-                    vector<Chromosome> offspring = crossover(pop[idx1], pop[idx2]);
-                    
-                    offspring[0].status = "GENERATION";
-                    offspring[1].status = "GENERATION";
-    
-                    // substitui 2 piores candidatos da população -> dois ultimos indices
-                    for(int i=0; i<2; i++) {
-                        int id = chromosomesNumber -i -1;
-                        pop[id] = offspring[i];
+                // marca periodo para união em contigs e inserção de novos genes 
+                for(int it=0; it<MISCEGENATION; it++) {
+
+                    // ordeno os cromossomos
+                    sort(pop.begin(), pop.end(), [](const Chromosome& a, const Chromosome& b) {
+                        return a.fitness > b.fitness;
+                    });
+        
+                    outFile << "POPULAÇÂO ORDENADA" << endl;
+                    for (int i = 0; i < pop.size(); i++) {
+                        outFile << pop[i].fitness << endl;
                     }
-                
-                    outFile << "\n=== CROSSOVER ===" << endl;
-                    outFile << "Pai 1 (índice " << idx1 << ") x Pai 2 (índice " << idx2 << ")" << endl;
-                    outFile << "Ponto de corte: " << (int)(0.25 * genesNumber) << " a " << (int)(0.75 * genesNumber) << endl;
-                    outFile << "Descendente 1 fitness: " << offspring[0].computeFitness(offspring[0].order) << endl;
-                    outFile << "Descendente 2 fitness: " << offspring[1].computeFitness(offspring[1].order) << endl;
-                }
-    
-                // MUTATION: todos cromossomos sofrem mutação individual -> busca local
-                int chromoId = 1;
-                for(Chromosome& chromo : pop) {           
-                    outFile << "\n=== MUTANDO CROMOSSOMO " << chromoId << " ===\n";
-                    chromo.mutate();
-                    chromoId++;
-    
-                    if(DEBUG) {
-                        outFile << ">>>>>> INICIAL " << endl;
-                        for(auto gene : chromo.genes) outFile << gene << endl;     
+        
+                    // CROSSOVER: um da elite e um geral
+                    if (pop.size() >= 2) {
+                        int idx1 = rand() % max(1, (int)(pop.size() * ELITE_PERC));
+                        int idx2 = rand() % pop.size();
                         
-                        //outFile << "\nOrdem final: ";
-                        //for (int x : chromo.order) outFile << x << " ";
-    
-                        outFile << "\nFitness final: " << chromo.fitness << endl;
+                        while (idx2 == idx1) 
+                            idx2 = rand() % pop.size();
                         
-                        vector<string> contigs = chromo.getFormedContigs();
-                        outFile << ">>>>>> " << contigs.size() << "contigs formados" << endl;
-                        for(auto contig : contigs) outFile << contig << endl;
+                        vector<Chromosome> offspring = crossover(pop[idx1], pop[idx2]);
+                        
+                        offspring[0].status = "GENERATION";
+                        offspring[1].status = "GENERATION";
+        
+                        // substitui 2 piores candidatos da população -> dois ultimos indices
+                        for(int i=0; i<2; i++) {
+                            int id = chromosomesNumber -i -1;
+                            pop[id] = offspring[i];
+                        }
+                    
+                        outFile << "\n=== CROSSOVER ===" << endl;
+                        outFile << "Pai 1 (índice " << idx1 << ") x Pai 2 (índice " << idx2 << ")" << endl;
+                        outFile << "Ponto de corte: " << (int)(0.25 * genesNumber) << " a " << (int)(0.75 * genesNumber) << endl;
+                        outFile << "Descendente 1 fitness: " << offspring[0].computeFitness(offspring[0].order) << endl;
+                        outFile << "Descendente 2 fitness: " << offspring[1].computeFitness(offspring[1].order) << endl;
+                    }
+        
+                    // MUTATION: todos cromossomos sofrem mutação individual -> busca local
+                    #pragma omp parallel for
+                    for (int i = 0; i < pop.size(); i++) {
+                        outFile << "\n=== MUTANDO CROMOSSOMO " << i << " ===\n";
+                        pop[i].mutate();
+                    
+                        if(DEBUG) {
+                            outFile << ">>>>>> INICIAL " << endl;
+                            for(auto gene : pop[i].genes) outFile << gene << endl;     
+                            
+                            //outFile << "\nOrdem final: ";
+                            //for (int x : pop[i].order) outFile << x << " ";
+        
+                            outFile << "\nFitness final: " << pop[i].fitness << endl;
+                            
+                            vector<string> contigs = pop[i].getFormedContigs();
+                            outFile << ">>>>>> " << contigs.size() << "contigs formados" << endl;
+                            for(auto contig : contigs) outFile << contig << endl;
+                        }
                     }
                 }
-    
+            
+                // final da etapa de miscigenação
+                // formo contigs e completo todos os cromossomo com novos genes 
+                outFile << "MISCIGENAÇÃO" << endl;
+
+                endMiscenegationPhase(pop, clusterId, era);
+
+                for(auto cromo : pop) 
+                    for(auto gene : cromo.genes) 
+                        outFile << gene << endl;
             }
 
             outFile.close();
             
-            //salva a elite dos cromossomos de cada cluster nas eras
+            // salva todos os resultados obtidos nas eras 
             string file = "eras/" + to_string(era) + ".txt"; 
             ofstream eraFile(file);
             

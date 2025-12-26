@@ -1,11 +1,11 @@
 #include "../header/Chromosome.hpp"
 using namespace std;
-Chromosome::Chromosome(int id, int genesNumber, int generation, int minOverlap, string status)
+Chromosome::Chromosome(int id, int genesNumber, int generation, int MIN_OVERLAPING, string status)
 {
     this->id;
     this->genesNumber = genesNumber;
     this->generation = generation;
-    this->minOverlap = minOverlap;
+    this->MIN_OVERLAPING = MIN_OVERLAPING;
     this->status = status;
     this->overlapped = false;
     this->fitness = 0;
@@ -23,7 +23,9 @@ int Chromosome::computeFitness(vector<int> &ord)
         computeOverlapping();
 
     int sobreposition = 0;
-    for (int i = 0; i + 1 < ord.size(); i++)
+    int n = ord.size() -1;
+    #pragma omp parallel for reduction(+:sobreposition)
+    for (int i = 0; i < n; i++)
         sobreposition += overlaps[ord[i]][ord[i + 1]];
     
     return sobreposition;
@@ -31,7 +33,9 @@ int Chromosome::computeFitness(vector<int> &ord)
 
 void Chromosome::updateFitness(const vector<int>& ord) {
     int sobreposition = 0;
-    for (int i = 0; i + 1 < ord.size(); i++)
+    int n = ord.size() -1;
+    #pragma omp parallel for reduction(+:sobreposition)
+    for (int i = 0; i < n; i++)
         sobreposition += overlaps[ord[i]][ord[i + 1]];
     this->fitness = sobreposition;
 }
@@ -40,10 +44,10 @@ void Chromosome::updateFitness(const vector<int>& ord) {
 // TODO: computar overlapping por kmer
 void Chromosome::computeOverlapping()
 {
-    int MIN_OVERLAP = 5;
     int n = genes.size();
     overlaps.assign(n, vector<int>(n, 0));
 
+    #pragma omp parallel for schedule(dynamic)
     for (int A = 0; A < n; A++)
     {
         for (int B = 0; B < n; B++)
@@ -53,14 +57,14 @@ void Chromosome::computeOverlapping()
 
             int maxOverlap = 0;
             int minLen = min(genes[A].size(), genes[B].size());
-            if (minLen < MIN_OVERLAP) continue;
+            if (minLen < MIN_OVERLAPING) continue;
 
             // testa se esta contido
             if (genes[A].find(genes[B]) != string::npos) {
                 overlaps[A][B] = genes[B].size();
             } else {
                 // procura o maior overlap entre sufixo de A e prefixo de B
-                for (int len = MIN_OVERLAP; len <= minLen; len++)
+                for (int len = MIN_OVERLAPING; len <= minLen; len++)
                 {
                     string prefixB = genes[B].substr(0, len);
                     string suffixA = genes[A].substr(genes[A].size() - len);
@@ -105,7 +109,7 @@ void Chromosome::mutate()
 
     bool improved = true;
     int iterations = 0;
-    const int MAX_ITERATIONS = 1000;
+    const int MAX_ITERATIONS = 250;
 
     while (improved && iterations < MAX_ITERATIONS)
     {
@@ -160,13 +164,10 @@ vector<string> Chromosome::getFormedContigs()
 
         int ov = overlaps[a][b];
 
-        if (ov >= minOverlap)
-        {
-            // continua o contig
+        // continua o contig
+        if (ov >= MIN_OVERLAPING) 
             current += genes[b].substr(ov);
-        }
-        else
-        {
+        else {
             // quebra de contig
             contigs.push_back(current);
             current = genes[b];
@@ -175,21 +176,16 @@ vector<string> Chromosome::getFormedContigs()
 
     contigs.push_back(current);
 
-   /*  //TODO: verificar
-    // atualizo meus genes pros contigs formados
-    vector<string> newGenes;
-    for(auto contig : contigs)
-        newGenes.push_back(contig);
-    genes = newGenes;
-
-    genesNumber = genes.size();
-    order.resize(genesNumber);
-    iota(order.begin(), order.end(), 0);
-    overlapped = false; */
-
     return contigs;
 }
 
+void Chromosome::groupContigs() {
+
+    this->genes = getFormedContigs();
+    overlapped = false;
+}
+
+//
 void Chromosome::printOverlapMatrix()
 {
     cout << "\nMatriz de Overlaps (A->B):\n";

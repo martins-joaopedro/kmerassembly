@@ -10,7 +10,7 @@ class Chromosome {
         int genesNumber;
         int generation;
         int fitness;
-        int minOverlap;
+        int MIN_OVERLAPING;
         string status;
         bool overlapped;
         
@@ -18,7 +18,7 @@ class Chromosome {
         vector<int> order;
         vector<vector<int>> overlaps;
         
-        Chromosome(int id, int genesNumber, int generation, int minOverlap, string status);
+        Chromosome(int id, int genesNumber, int generation, int MIN_OVERLAPING, string status);
         int computeFitness(vector<int>& order);
         void updateFitness(const vector<int>& ord);
         void mutate();
@@ -27,6 +27,7 @@ class Chromosome {
         int deltaInsertion(int i, int j);
         vector<string> getFormedContigs();
         void printOverlapMatrix();
+        void groupContigs();
 
 };
 
